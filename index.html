@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DeepSeek 智能拓扑分支对话系统</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        :root {
+            --bg-main: #1e1e1e;
+            --bg-panel: #252526;
+            --bg-canvas: #111111;
+            --border-color: #333333;
+            --text-main: #e0e0e0;
+            --primary: #007aff;
+            --primary-hover: #0056b3;
+            --danger: #ff453a;
+            --success: #32d74b;
+        }
+
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 10px; background: var(--bg-main); color: var(--text-main); margin: 0; user-select: none; height: calc(100vh - 20px); display: flex; flex-direction: column; box-sizing: border-box; }
+        h2 { color: #fff; margin: 0 0 10px 5px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+        
+        .control-panel { display: flex; gap: 8px; background: var(--bg-panel); padding: 10px; border-radius: 8px; margin-bottom: 10px; align-items: center; border: 1px solid var(--border-color); flex-wrap: wrap; }
+        .api-group { display: flex; align-items: center; gap: 6px; font-size: 12px; background: #1a1a1a; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border-color); flex-wrap: wrap; }
+        input[type="password"] { background: #2d2d2d; border: 1px solid var(--border-color); color: #fff; padding: 4px 6px; border-radius: 4px; width: 110px; outline: none; font-size: 12px; }
+        select { background: #2d2d2d; border: 1px solid var(--border-color); color: #fff; padding: 4px 6px; border-radius: 4px; cursor: pointer; outline: none; font-size: 12px; }
+        
+        button { background: var(--primary); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; transition: all 0.2s; display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+        button:hover { background: var(--primary-hover); }
+        button:disabled { background: #444; color: #777; cursor: not-allowed; }
+        button.btn-danger { background: var(--danger); }
+        button.btn-secondary { background: #444; color: #eee; }
+        button.btn-success { background: var(--success); }
+        .status { color: #aaa; font-size: 12px; width: 100%; margin-top: 5px; border-top: 1px dashed #333; padding-top: 5px; }
+        
+        /* 核心响应式容器：默认电脑端左右并排 */
+        .main-container { display: flex; flex: 1; width: 100%; height: 100%; overflow: hidden; gap: 10px; }
+        .canvas-container { flex: 6; background: var(--bg-canvas); border-radius: 8px; border: 1px solid var(--border-color); position: relative; overflow: hidden; height: 100%; }
+        .right-panel { flex: 4; background: var(--bg-panel); border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden; height: 100%; }
+
+        /* 📱 手机端样式覆盖：自动变成上下叠放 */
+        @media (max-width: 768px) {
+            body { height: 100vh; padding: 5px; }
+            .main-container { flex-direction: column; }
+            .canvas-container { flex: 4; min-height: 250px; }
+            .right-panel { flex: 6; }
+            input[type="password"] { width: 100%; }
+            .api-group { width: 100%; justify-content: space-between; }
+        }
+
+        svg { width: 100%; height: 100%; background-image: radial-gradient(#262626 1px, transparent 0); background-size: 24px 24px; }
+        .fullscreen-btn { position: absolute; top: 12px; right: 12px; background: rgba(37, 37, 38, 0.8); border: 1px solid var(--border-color); color: #eee; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 10; backdrop-filter: blur(4px); }
+        
+        .tab-header { display: flex; background: #1a1a1a; border-bottom: 1px solid var(--border-color); }
+        .tab-btn { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-size: 13px; font-weight: bold; color: #888; }
+        .tab-btn.active { color: var(--primary); background: var(--bg-panel); border-bottom: 2px solid var(--primary); }
+        .tab-content { flex: 1; padding: 10px; display: none; overflow: hidden; }
+        .tab-content.active { display: flex; flex-direction: column; }
+
+        .link { stroke: #555; stroke-width: 2px; }
+        .node { cursor: pointer; }
+        .node rect { fill: #2d2d2d; stroke: var(--primary); stroke-width: 2px; rx: 6; ry: 6; }
+        .node.active rect { fill: var(--primary); stroke: #fff; stroke-width: 3px; }
+        .node text { fill: #fff; font-size: 11px; pointer-events: none; text-anchor: middle; dominant-baseline: middle; }
+        
+        .chat-view { display: flex; flex-direction: column; height: 100%; width: 100%; overflow: hidden; }
+        .chat-history { flex: 1; overflow-y: auto; background: #1a1a1a; border-radius: 6px; padding: 10px; margin-bottom: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 12px; }
+        .chat-bubble-group { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+        .chat-bubble { padding: 8px 12px; border-radius: 8px; max-width: 90%; font-size: 13px; line-height: 1.4; word-wrap: break-word; }
+        .bubble-user { background: #004d99; color: #fff; align-self: flex-end; }
+        .bubble-ai { background: #2d2d2d; color: #eee; align-self: flex-start; border: 1px solid #444; user-select: text; }
+        .history-divider { text-align: center; color: #555; font-size: 10px; margin: 2px 0; border-bottom: 1px dashed #333; line-height: 0.1em; }
+        .history-divider span { background: #1a1a1a; padding: 0 5px; }
+        
+        .chat-input-area { display: flex; gap: 6px; align-items: flex-end; padding-bottom: 2px; }
+        textarea { flex: 1; background: #1a1a1a; border: 1px solid var(--border-color); color: #fff; border-radius: 6px; padding: 8px; resize: none; height: 36px; font-family: inherit; font-size: 13px; outline: none; }
+        textarea:focus { border-color: var(--primary); }
+        
+        pre { flex: 1; background: #111; color: #a9dc76; padding: 12px; border-radius: 6px; overflow-y: auto; font-size: 11px; margin: 0; border: 1px solid var(--border-color); }
+        .loading-dots::after { content: '...'; display: inline-block; animation: dots 1.5s infinite step-start; width: 1em; }
+        @keyframes dots { 0%, 100% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+        #fileInput { display: none; }
+    </style>
+</head>
+<body>
+
+    <h2>DeepSeek 树状分支管理图谱</h2>
+    
+    <div class="control-panel">
+        <div class="api-group">
+            <div><label>API Key: </label><input type="password" id="apiKeyInput" placeholder="输入 Key" onchange="saveConfig()"></div>
+            <div><label>模型: </label>
+            <select id="modelSelect" onchange="saveConfig()">
+                <option value="deepseek-chat">deepseek-v4-flash (极速)</option>
+                <option value="deepseek-reasoner">deepseek-v4-pro (推理)</option>
+            </select></div>
+        </div>
+        <button onclick="newChat()">新建对话</button>
+        <button id="btnBranch" onclick="newBranch()" disabled>新开分支</button>
+        <button id="btnExport" onclick="exportBranchJson()" disabled>导出</button>
+        <button class="btn-success" onclick="triggerImport()">导入</button>
+        <input type="file" id="fileInput" accept=".json" onchange="importBranchJson(event)">
+        <button id="btnDelete" class="btn-danger" onclick="deleteSubtree()" disabled>删除</button>
+        <button id="btnUndo" class="btn-secondary" onclick="undoDelete()" disabled>撤销 (0)</button>
+        <div class="status" id="statusText">请在画布中新建或选择方块</div>
+    </div>
+
+    <div class="main-container">
+        <div id="leftCanvas" class="canvas-container">
+            <button class="fullscreen-btn" onclick="toggleFullscreen()">全屏</button>
+            <svg id="graphSvg"><g id="viewContainer"></g></svg>
+        </div>
+        
+        <div id="rightPanel" class="right-panel">
+            <div class="tab-header">
+                <div class="tab-btn active" id="tabChat" onclick="switchTab('chat')">链路对话长廊</div>
+                <div class="tab-btn" id="tabData" onclick="switchTab('data')">拓扑数据(JSON)</div>
+            </div>
+            
+            <div class="tab-content active" id="contentChat">
+                <div class="chat-view">
+                    <div class="chat-history" id="chatHistory">
+                        <div style="text-align:center; color:#666; margin:auto; font-size:12px;">点击或新建方块回溯对话</div>
+                    </div>
+                    <div class="chat-input-area">
+                        <textarea id="chatInput" placeholder="输入问题..." onkeydown="handleKeyDown(event)"></textarea>
+                        <button id="btnSend" onclick="continueChat()" disabled>发送</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tab-content" id="contentData">
+                <pre id="dataViewer">[]</pre>
+            </div>
+        </div>
+    </div>
+
+<script>
+    let nodesData = JSON.parse(localStorage.getItem('DS_PHYSICS_NODES')) || [];
+    let activeNodeId = null;
+    let undoStack = []; 
+
+    const svg = d3.select("#graphSvg");
+    const viewContainer = d3.select("#viewContainer");
+    const leftCanvas = document.getElementById("leftCanvas");
+    
+    let width = leftCanvas.clientWidth;
+    let height = leftCanvas.clientHeight;
+
+    // 针对手机端和电脑端做缩放适配
+    const zoomBehavior = d3.zoom()
+        .scaleExtent([0.1, 5])
+        .on("zoom", (event) => {
+            viewContainer.attr("transform", event.transform);
+            svg.style("background-size", `${24 * event.transform.k}px ${24 * event.transform.k}px`);
+        });
+    svg.call(zoomBehavior);
+
+    svg.on("click", function(event) {
+        if (event.target.tagName === "svg" || event.target.tagName === "g") {
+            clearSelection();
+            updateGraph();
+        }
+    });
+
+    const simulation = d3.forceSimulation()
+        .force("link", d3.forceLink().id(d => d.id).distance(70).strength(1))
+        .force("charge", d3.forceManyBody().strength(-250))
+        .force("collision", d3.forceCollide().radius(55))
+        .on("tick", ticked);
+
+    function initConfig() {
+        document.getElementById("apiKeyInput").value = localStorage.getItem('DS_API_KEY') || '';
+        document.getElementById("modelSelect").value = localStorage.getItem('DS_MODEL') || 'deepseek-chat';
+    }
+    function saveConfig() {
+        localStorage.setItem('DS_API_KEY', document.getElementById("apiKeyInput").value);
+        localStorage.setItem('DS_MODEL', document.getElementById("modelSelect").value);
+    }
+    function syncStorage() {
+        localStorage.setItem('DS_PHYSICS_NODES', JSON.stringify(nodesData));
+    }
+
+    function generateUniqueId() {
+        return "n_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    }
+
+    function newChat() {
+        const id = generateUniqueId();
+        const uniqueRoots = Array.from(new Set(nodesData.map(n => n.rootId)));
+        const targetX = (width / 2) + (uniqueRoots.length - uniqueRoots.length/2) * 160;
+
+        nodesData.push({
+            id: id, parentId: null, rootId: id, text: `未提问`, 
+            userPrompt: "", aiResponse: "", isPendingInit: true, 
+            x: targetX, y: 60
+        });
+        syncStorage();
+        selectNode(id);
+        updateGraph();
+    }
+
+    function newBranch() {
+        if (!activeNodeId) return;
+        const current = nodesData.find(n => n.id === activeNodeId);
+        if (!current.parentId) { alert("顶层对话无法平级切分，请选择下方的子问答方块再分叉！"); return; }
+        
+        const id = generateUniqueId();
+        nodesData.push({
+            id: id, parentId: current.parentId, rootId: current.rootId, text: `新分支`, 
+            userPrompt: "", aiResponse: "", isPendingInit: true, 
+            x: current.x + 60, y: current.y
+        });
+        syncStorage();
+        selectNode(id);
+        switchTab('chat');
+        updateGraph();
+    }
+
+    async function continueChat() {
+        if (!activeNodeId) return;
+        let currentNode = nodesData.find(n => n.id === activeNodeId);
+        const prompt = document.getElementById("chatInput").value.trim();
+        if (!prompt) return;
+
+        const apiKey = localStorage.getItem('DS_API_KEY');
+        if (!apiKey) { alert("请在上方输入可用的 DeepSeek API Key 再提交！"); return; }
+
+        document.getElementById("chatInput").value = "";
+
+        if (currentNode.isPendingInit) {
+            currentNode.userPrompt = prompt;
+            currentNode.text = prompt.substring(0, 5) + (prompt.length > 5 ? '...' : ''); 
+            currentNode.isPendingInit = false;
+            currentNode.isLoading = true;
+            updateGraph();
+            
+            let contextChain = [];
+            let currentLink = currentNode.parentId ? nodesData.find(p => p.id === currentNode.parentId) : null;
+            while (currentLink) {
+                if(!currentLink.isPendingInit && currentLink.userPrompt) {
+                    contextChain.unshift({ role: "assistant", content: currentLink.aiResponse });
+                    contextChain.unshift({ role: "user", content: currentLink.userPrompt });
+                }
+                currentLink = currentLink.parentId ? nodesData.find(p => p.id === currentLink.parentId) : null;
+            }
+            contextChain.push({ role: "user", content: prompt });
+            await triggerDeepSeekRequest(currentNode, contextChain);
+            return;
+        }
+
+        const newId = generateUniqueId();
+        let contextChain = [];
+        let currentLink = currentNode;
+        while (currentLink) {
+            if(!currentLink.isPendingInit && currentLink.userPrompt) {
+                contextChain.unshift({ role: "assistant", content: currentLink.aiResponse });
+                contextChain.unshift({ role: "user", content: currentLink.userPrompt });
+            }
+            currentLink = currentLink.parentId ? nodesData.find(p => p.id === currentLink.parentId) : null;
+        }
+        contextChain.push({ role: "user", content: prompt });
+
+        const newNode = {
+            id: newId, parentId: activeNodeId, rootId: currentNode.rootId,
+            text: prompt.substring(0, 5) + (prompt.length > 5 ? '...' : ''), 
+            userPrompt: prompt, aiResponse: "正在思考中", isLoading: true,
+            x: currentNode.x, y: currentNode.y + 70
+        };
+        nodesData.push(newNode);
+        selectNode(newId);
+        updateGraph();
+        await triggerDeepSeekRequest(newNode, contextChain);
+    }
+
+    async function triggerDeepSeekRequest(targetNode, messages) {
+        try {
+            const apiModelName = localStorage.getItem('DS_MODEL') || "deepseek-chat"; 
+            const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem('DS_API_KEY')}` },
+                body: JSON.stringify({ model: apiModelName, messages: messages, temperature: 0.7 })
+            });
+            const resData = await response.json();
+            if (resData.choices && resData.choices[0]) {
+                targetNode.aiResponse = resData.choices[0].message.content;
+            } else {
+                targetNode.aiResponse = "异常反馈: " + JSON.stringify(resData);
+            }
+        } catch (err) {
+            targetNode.aiResponse = "请求失败: " + err.message;
+        } finally {
+            targetNode.isLoading = false;
+            syncStorage();
+            if (activeNodeId === targetNode.id) selectNode(targetNode.id);
+            updateGraph();
+        }
+    }
+
+    function deleteSubtree() {
+        if (!activeNodeId) return;
+        let toDeleteIds = new Set();
+        function collect(id) { toDeleteIds.add(id); nodesData.forEach(n => { if (n.parentId === id) collect(n.id); }); }
+        collect(activeNodeId);
+
+        const deleted = nodesData.filter(n => toDeleteIds.has(n.id));
+        undoStack.push(deleted);
+        nodesData = nodesData.filter(n => !toDeleteIds.has(n.id));
+        syncStorage();
+        
+        document.getElementById("btnUndo").innerText = `撤销 (${undoStack.length})`;
+        document.getElementById("btnUndo").disabled = false;
+        clearSelection();
+        updateGraph();
+    }
+
+    function undoDelete() {
+        if (undoStack.length === 0) return;
+        const recovered = undoStack.pop();
+        nodesData = nodesData.concat(recovered);
+        syncStorage();
+        document.getElementById("btnUndo").innerText = `撤销 (${undoStack.length})`;
+        if (undoStack.length === 0) document.getElementById("btnUndo").disabled = true;
+        if (recovered.length > 0) selectNode(recovered[0].id);
+        updateGraph();
+    }
+
+    function exportBranchJson() {
+        if (!activeNodeId) return;
+        let branchChain = [];
+        let current = nodesData.find(n => n.id === activeNodeId);
+        while (current) {
+            branchChain.unshift({
+                id: current.id, parentId: current.parentId, rootId: current.rootId, text: current.text,
+                userPrompt: current.userPrompt, aiResponse: current.aiResponse, isPendingInit: current.isPendingInit || false,
+                x: current.x, y: current.y
+            });
+            current = current.parentId ? nodesData.find(p => p.id === current.parentId) : null;
+        }
+        const blob = new Blob([JSON.stringify(branchChain, null, 2)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `branch-${activeNodeId}.json`;
+        a.click();
+    }
+
+    function triggerImport() { document.getElementById("fileInput").click(); }
+
+    function importBranchJson(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const importedData = JSON.parse(e.target.result);
+                if (!Array.isArray(importedData)) return;
+                const existingIds = new Set(nodesData.map(n => n.id));
+                const idMap = new Map();
+
+                importedData.forEach(node => {
+                    idMap.set(node.id, existingIds.has(node.id) ? generateUniqueId() : node.id);
+                });
+
+                let lastNewId = null;
+                importedData.forEach(node => {
+                    const mappedId = idMap.get(node.id);
+                    let mappedParentId = node.parentId && idMap.has(node.parentId) ? idMap.get(node.parentId) : node.parentId;
+                    let mappedRootId = node.rootId && idMap.has(node.rootId) ? idMap.get(node.rootId) : node.rootId;
+
+                    nodesData.push({
+                        id: mappedId, parentId: mappedParentId, rootId: mappedRootId,
+                        text: node.text || "导入", userPrompt: node.userPrompt || "", aiResponse: node.aiResponse || "",
+                        isPendingInit: node.isPendingInit || false,
+                        x: (node.x || width / 2) + (mappedId !== node.id ? 20 : 0),
+                        y: (node.y || 100) + (mappedId !== node.id ? 20 : 0)
+                    });
+                    lastNewId = mappedId;
+                });
+                syncStorage(); updateGraph();
+                if (lastNewId) selectNode(lastNewId);
+            } catch (err) { alert("导入失败"); }
+            finally { event.target.value = ""; }
+        };
+        reader.readAsText(file);
+    }
+
+    function selectNode(id) {
+        activeNodeId = id;
+        document.getElementById("btnBranch").disabled = false;
+        document.getElementById("btnDelete").disabled = false;
+        document.getElementById("btnExport").disabled = false;
+        document.getElementById("btnSend").disabled = false;
+        
+        const node = nodesData.find(n => n.id === id);
+        if(!node) { clearSelection(); return; }
+        document.getElementById("statusText").innerHTML = `当前选中: <span style='color:var(--success);font-weight:bold;'>${node.text}</span>`;
+        
+        let historyChain = [];
+        let current = node;
+        while (current) { historyChain.unshift(current); current = current.parentId ? nodesData.find(p => p.id === current.parentId) : null; }
+
+        const historyBox = document.getElementById("chatHistory");
+        historyBox.innerHTML = "";
+
+        historyChain.forEach((n, index) => {
+            if (index > 0) {
+                const divider = document.createElement("div"); divider.className = "history-divider";
+                divider.innerHTML = `<span>分叉脉络 (${n.text})</span>`;
+                historyBox.appendChild(divider);
+            }
+            const bubbleGroup = document.createElement("div"); bubbleGroup.className = "chat-bubble-group";
+            if (n.userPrompt) {
+                const uB = document.createElement("div"); uB.className = "chat-bubble bubble-user";
+                uB.innerHTML = `<b>问:</b> ${escapeHtml(n.userPrompt)}`; bubbleGroup.appendChild(uB);
+            }
+            if (n.aiResponse) {
+                const aB = document.createElement("div"); aB.className = "chat-bubble bubble-ai";
+                if (n.isLoading) aB.className += " loading-dots";
+                aB.innerHTML = `<b>答:</b> ${escapeHtml(n.aiResponse).replace(/\n/g, '<br>')}`; bubbleGroup.appendChild(aB);
+            }
+            historyBox.appendChild(bubbleGroup);
+        });
+        historyBox.scrollTop = historyBox.scrollHeight;
+    }
+
+    function clearSelection() {
+        activeNodeId = null;
+        document.getElementById("btnBranch").disabled = true;
+        document.getElementById("btnDelete").disabled = true;
+        document.getElementById("btnExport").disabled = true;
+        document.getElementById("btnSend").disabled = true;
+        document.getElementById("statusText").innerHTML = `请在画布中新建或选择方块`;
+        document.getElementById("chatHistory").innerHTML = `<div style="text-align:center; color:#666; margin:auto; font-size:12px;">点击或新建方块回溯对话</div>`;
+    }
+
+    function switchTab(type) {
+        document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+        if (type === 'chat') {
+            document.getElementById("tabChat").classList.add("active");
+            document.getElementById("contentChat").classList.add("active");
+            if (activeNodeId) selectNode(activeNodeId);
+        } else {
+            document.getElementById("tabData").classList.add("active");
+            document.getElementById("contentData").classList.add("active");
+            document.getElementById("dataViewer").textContent = JSON.stringify(nodesData, null, 2);
+        }
+    }
+
+    function handleKeyDown(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); continueChat(); } }
+    function escapeHtml(text) { return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+    function ticked() {
+        if(nodesData.length === 0) return;
+        const uniqueRoots = Array.from(new Set(nodesData.map(n => n.rootId)));
+
+        let treeWidthWeights = {}; 
+        uniqueRoots.forEach(rootId => {
+            let maxSiblings = 1;
+            let currentTreeNodes = nodesData.filter(n => n.rootId === rootId);
+            currentTreeNodes.forEach(n => {
+                let siblingsCount = currentTreeNodes.filter(s => s.parentId === n.parentId).length;
+                if(siblingsCount > maxSiblings) maxSiblings = siblingsCount;
+            });
+            treeWidthWeights[rootId] = 140 + (maxSiblings * 30); 
+        });
+
+        let treeCenters = {};
+        let accumulatedX = (width - Object.values(treeWidthWeights).reduce((a, b) => a + b, 0)) / 2;
+        uniqueRoots.forEach(rootId => {
+            treeCenters[rootId] = accumulatedX + treeWidthWeights[rootId] / 2;
+            accumulatedX += treeWidthWeights[rootId];
+        });
+
+        nodesData.forEach(d => {
+            const targetX = treeCenters[d.rootId] || (width / 2);
+            d.vx += (targetX - d.x) * 0.08;
+
+            if (d.parentId) {
+                const parent = nodesData.find(p => p.id === d.parentId);
+                if (parent) {
+                    const verticalGap = 70;
+                    if (d.y < parent.y + verticalGap) { d.y = parent.y + verticalGap; d.vy += 0.2; }
+                }
+            } else { d.vy += (60 - d.y) * 0.04; }
+
+            const padding = 40;
+            if (d.x < padding) { d.x = padding; d.vx *= -0.2; }
+            if (d.x > width - padding) { d.x = width - padding; d.vx *= -0.2; }
+            if (d.y < 30) { d.y = 30; d.vy *= -0.2; }
+        });
+
+        viewContainer.selectAll(".link").attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+        viewContainer.selectAll(".node").attr("transform", d => `translate(${d.x},${d.y})`);
+    }
+
+    function updateGraph() {
+        if (document.getElementById("contentData").classList.contains("active")) {
+            document.getElementById("dataViewer").textContent = JSON.stringify(nodesData, null, 2);
+        }
+        const linksData = [];
+        nodesData.forEach(n => { if (n.parentId) linksData.push({ source: n.parentId, target: n.id }); });
+
+        const link = viewContainer.selectAll(".link").data(linksData, d => d.source + "-" + d.target);
+        link.exit().remove();
+        link.enter().append("line").attr("class", "link");
+
+        const node = viewContainer.selectAll(".node").data(nodesData, d => d.id);
+        node.exit().remove();
+
+        const nodeEnter = node.enter().append("g")
+            .attr("class", "node")
+            .on("click", (event, d) => { selectNode(d.id); updateGraph(); event.stopPropagation(); })
+            .call(d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended));
+
+        nodeEnter.append("rect").attr("x", -45).attr("y", -15).attr("width", 90).attr("height", 30);
+        nodeEnter.append("text").attr("dy", ".35em").text(d => d.text);
+
+        const allNodes = nodeEnter.merge(node);
+        allNodes.classed("active", d => d.id === activeNodeId);
+        allNodes.select("text").text(d => d.text);
+        allNodes.select("rect").style("stroke", d => d.isLoading ? "var(--success)" : (d.id === activeNodeId ? "#fff" : "var(--primary)"));
+
+        simulation.nodes(nodesData);
+        simulation.force("link").links(linksData);
+        simulation.alpha(0.1).restart();
+    }
+
+    function dragstarted(event, d) { if (!event.active) simulation.alphaTarget(0.05).restart(); d.fx = d.x; d.fy = d.y; }
+    function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
+    function dragended(event, d) { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }
+
+    function toggleFullscreen() {
+        if (!document.fullscreenElement) { leftCanvas.requestFullscreen().then(() => resize()); } 
+        else { document.exitFullscreen().then(() => resize()); }
+    }
+    function resize() { setTimeout(() => { width = leftCanvas.clientWidth; height = leftCanvas.clientHeight; simulation.alpha(0.1).restart(); }, 100); }
+
+    window.addEventListener("resize", resize);
+    window.onload = () => { initConfig(); updateGraph(); if(nodesData.length>0) selectNode(nodesData[nodesData.length-1].id); };
+</script>
+</body>
+</html>
